@@ -34,8 +34,11 @@ Key decisions and why
 4) Chimera-check before, not after, trusting species calls. Cheap insurance against a false species ID propagating silently across all 18 samples.  
 5) Depth ≠ abundance, stated explicitly. rRNA copy number varies between species and PCR efficiency varies between templates, so per-contig read depth is treated as a relative signal, not a precise proportion — this caveat is carried through rather than presented as a clean percentage.  
 
-I'll pull the actual methods from each paper to give you an accurate comparison rather than relying on memory of these specifics.I pulled the actual methods sections for these four to give you an accurate comparison rather than working from summary abstracts alone.
 
+
+
+
+Comparing my pipeline to these papers:
 ## Quick comparison table
 
 | | Your pipeline | Zhang 2023 | Wei 2024 (Gurigumu-7) | Liu 2021 (Wuhu San) | Urumarudappa 2022 (Thai) |
