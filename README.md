@@ -12,3 +12,24 @@ The Species Identification in Traditional Herbal Patent Medicine, Wuhu San, Base
 
 https://pmc.ncbi.nlm.nih.gov/articles/PMC9187672/#Sec9  
 Development of a DNA barcode library of plants in the Thai Herbal Pharmacopoeia and Monographs for authentication of herbal products (Urumarudappa, et al., 2022)  
+
+Pipeline overview
+
+Goal: identify plant species present in mixed-origin herbal medicine samples from long-range PCR-tiled rRNA cistron sequencing (18S–ITS1–5.8S–ITS2–28S), and estimate their relative proportions — implemented as a Snakemake workflow, run per sample, scalable across all 18.
+
+Key steps
+1) QC + merge (fastp) — adapter/quality trim, then merge overlapping R1/R2 pairs into single longer reads where fragment size allows.  
+2) Deduplication (clumpify) — remove PCR duplicates, run separately on merged vs. unmerged reads.  
+3) Split assembly — long-insert (unmerged) pairs → metaspades.py (paired mode); short-insert (merged) reads → spades.py --only-assembler (single-end mode). Combined contig sets afterward via cd-hit-est.  
+4) Chimera detection (vsearch/uchime_denovo) — contigs annotated with abundance (;size= from SPAdes coverage), sorted, screened for chimeric assemblies before trusting any species call.  
+5) ITS extraction (ITSx) — HMM-based identification of ITS1/5.8S/ITS2/flanking SSU-LSU boundaries per contig, run on assembled contigs (not raw reads).  
+6) Region selection script — per ITS-flagged contig, picks the best available sequence for BLAST: full ITS1–5.8S–ITS2 span if available, else ITS1+ITS2 concatenated, else whichever single region ITSx recovered.  
+7) BLAST (manual, NCBI web) — species ID per extracted sequence; deliberately not automated, since accuracy on ambiguous/divergent hits mattered more than throughput.  
+8) Targeted depth mapping (bowtie2 + samtools) — reads mapped back onto ITS-flagged contigs only (not the full 250-contig assembly), MAPQ-filtered, to get a per-contig depth number as a relative-abundance proxy between species.  
+
+Key decisions and why  
+1) Split assembly by fragment type, not pooled. Mixing merged (short-insert) and unmerged (long-insert) reads in one metaSPAdes run broke insert-size estimation and repeat resolution; assembling separately and merging contigs afterward avoided this and let each branch recover sequence the other missed.  
+2) BLAST the ITSx-extracted region, never the whole contig. Full contigs include long, highly conserved 18S/28S flanking sequence; whole-contig BLAST lets that conserved region dominate the score and return unrelated genera. Only the isolated ITS1/ITS2 window is species-diagnostic.  
+3) Target bowtie2 mapping at ITS-flagged contigs only, not the full assembly. Mapping against all 250 contigs caused ~85–90% multi-mapping (near-identical short/junk contigs competing for reads), making depth numbers meaningless. Restricting to the handful of real ITS-bearing contigs collapsed multi-mapping to a manageable level and made depth differences between species interpretable.  
+4) Chimera-check before, not after, trusting species calls. Cheap insurance against a false species ID propagating silently across all 18 samples.  
+5) Depth ≠ abundance, stated explicitly. rRNA copy number varies between species and PCR efficiency varies between templates, so per-contig read depth is treated as a relative signal, not a precise proportion — this caveat is carried through rather than presented as a clean percentage.  
