@@ -23,6 +23,8 @@ conda install bioconda::spades
 conda install bioconda::fastp
 conda install bioconda::bbmap
 conda install bioconda::cd-hit
+conda install bioconda::vsearch
+conda install bioconda::seqkit
 ```
 
 Running kraken (on 1 sample, test mode):
@@ -129,3 +131,141 @@ cat pilot_assembly_v4/itsx_v4_test.summary.txt
 Still only 86% similarity in BLAST and 5 sequences (2 full length - 1 from short read and 1 from long read)
 
 Bottom line: treat this as "Hippophae rhamnoides and Rhaponticum carthamoides are confidently present" — that claim is well-supported. Do not treat it as "this sample contains only these 2 plant species" — that claim isn't supported yet, and would need either deeper sequencing, a more sensitive extraction strategy, or acceptance that some real components will stay below this pipeline's detection floor.
+
+New plan
+# 1 -check quality of assembly:
+```
+cd pilot_assembly_v4
+
+perl -pe '
+  if (/^>/ and /cov_([\d.]+)/) {
+    my $size = int($1 * 10);
+    $size = 1 if $size < 1;
+    chomp;
+    $_ .= ";size=$size\n";
+  }
+' combined_contigs_nr_tagged.fasta > combined_contigs_sized.fasta
+```
+
+```
+vsearch --sortbysize combined_contigs_sized.fasta \
+  --output combined_contigs_sorted.fasta
+```
+
+Reading file combined_contigs_sized.fasta 100%  
+59490 nt in 250 seqs, min 57, max 2414, avg 238
+Getting sizes 100% 
+Sorting 100%
+Median abundance: 1354
+Writing output 100% 
+
+Chimera detection:
+```
+vsearch --uchime_denovo combined_contigs_sorted.fasta \
+  --nonchimeras combined_contigs_nonchimeric.fasta \
+  --chimeras combined_contigs_chimeric.fasta \
+  --uchimeout uchime_report.txt \
+  --uchimeout5
+```
+
+Reading file combined_contigs_sorted.fasta 100%  
+59490 nt in 250 seqs, min 57, max 2414, avg 238
+Masking 100% 
+Sorting by abundance 100%
+Counting k-mers 100% 
+Detecting chimeras 100%  
+Found 4 (1.6%) chimeras, 246 (98.4%) non-chimeras,
+and 0 (0.0%) borderline sequences in 250 unique sequences.
+Taking abundance information into account, this corresponds to
+2853 (0.5%) chimeras, 591106 (99.5%) non-chimeras,
+and 0 (0.0%) borderline sequences in 593959 total sequences.
+
+```
+grep -c ">" combined_contigs_chimeric.fasta   # should show 4
+grep ">" combined_contigs_chimeric.fasta       # see which ones
+```
+
+4
+>shortinsert_NODE_76_length_190_cov_103.634921;size=1036
+>shortinsert_NODE_21_length_265_cov_75.927536;size=759
+>shortinsert_NODE_16_length_316_cov_60.534392;size=605
+>shortinsert_NODE_15_length_330_cov_45.325123;size=453
+
+Checking if my chimeras made it to the after itsx results:
+```
+cd pilot_assembly_v4
+ITSx -i combined_contigs_nonchimeric.fasta \
+  -o itsx_v4_nonchimeric --cpu 30 --preserve T
+cat itsx_v4_nonchimeric.summary.txt
+diff <(sort itsx_v4_test.positions.txt) <(sort itsx_v4_nonchimeric.positions.txt)
+```
+
+Checking assembly stats:
+```
+seqkit stats -a combined_contigs_nr_tagged.fasta
+```
+file                              format  type  num_seqs  sum_len  min_len  avg_len  max_len   Q1   Q2   Q3  sum_gap  N50  N50_num  Q20(%)  Q30(%)  AvgQual  GC(%)  sum_n
+combined_contigs_nr_tagged.fasta  FASTA   DNA        250   59,490       57      238    2,414  143  171  244        0  240       52       0       0        0  50.29      0
+
+Separately for long insert and short insert:
+```
+seqkit stats -a pilot_assembly_v4/longinsert_ONplants-1_S40/contigs.fasta
+seqkit stats -a pilot_assembly_v4/shortinsert_ONplants-1_S40/contigs.fasta
+```
+
+Installing quast:
+```
+conda create --name quast python=3.10
+conda activate quast
+conda install bioconda::quast
+conda install bioconda::bowtie2 bioconda::samtools
+```
+
+More detailed stats with QUAST:
+```
+quast.py pilot_assembly_v4/combined_contigs_nr_tagged.fasta \
+  pilot_assembly_v4/longinsert_ONplants-1_S40/contigs.fasta \
+  pilot_assembly_v4/shortinsert_ONplants-1_S40/contigs.fasta \
+  -o quast_out_v4 --threads 8
+```
+
+Read mapping back QC:
+```
+bowtie2-build combined_contigs_nr_tagged.fasta contigs_idx
+
+bowtie2 -x contigs_idx \
+  -1 ../qc_reads/ONplants-1_S40_unmerged_R1_dedup.fastq.gz \
+  -2 ../qc_reads/ONplants-1_S40_unmerged_R2_dedup.fastq.gz \
+  -U ../qc_reads/ONplants-1_S40_merged_dedup.fastq.gz \
+  --threads 30 -S mapped.sam
+
+samtools sort -@8 -o mapped.sorted.bam mapped.sam
+samtools index mapped.sorted.bam
+samtools flagstat mapped.sorted.bam        # % reads mapping back — sanity check
+samtools depth -a mapped.sorted.bam > depth_per_contig.txt
+```
+
+Using only those 5 fragments with ITSx for reference:
+```
+seqkit grep -n -f <(echo -e "longinsert_NODE_1_length_1872_cov_7.430380\nlonginsert_NODE_2_length_1755_cov_2303.875882\nlonginsert_NODE_11_length_389_cov_1.673653\nshortinsert_NODE_1_length_2414_cov_1.659816\nshortinsert_NODE_8_length_441_cov_0.914013") \
+  combined_contigs_nr_tagged.fasta > its_contigs_only.fasta
+
+bowtie2-build its_contigs_only.fasta its_contigs_idx
+
+bowtie2 -x its_contigs_idx \
+  -1 ../qc_reads/ONplants-1_S40_unmerged_R1_dedup.fastq.gz \
+  -2 ../qc_reads/ONplants-1_S40_unmerged_R2_dedup.fastq.gz \
+  -U ../qc_reads/ONplants-1_S40_merged_dedup.fastq.gz \
+  --threads 30 -S mapped_its_only.sam
+
+samtools sort -@8 -o mapped_its_only.sorted.bam mapped_its_only.sam
+samtools index mapped_its_only.sorted.bam
+samtools flagstat mapped_its_only.sorted.bam
+
+awk '/^>shortinsert_NODE_1_length_2414/{flag=1; print; next} /^>/{flag=0} flag'   combined_contigs_nr_tagged.fasta > node1_full.fasta
+awk '/^>longinsert_NODE_2_length_1755/{flag=1; print; next} /^>/{flag=0} flag'   combined_contigs_nr_tagged.fasta > node2_full.fasta
+```
+
+I then made a custom script to extract specific fasta files that i want to blast. For my pilot sample it resulted in 5 sequences 
+
+Hippophae rhamnoides was detected via two distinct ITS sequence variants: (1) a dominant, high-identity variant (99.27% to reference, longinsert_NODE_2, depth 5,485x) and (2) a divergent variant with a real reference-coverage gap (86.75% best identity, depth ~110x combined), independently reconstructed by both assembly branches from different read populations, confirming it's a genuine sequence rather than an assembly artifact.
