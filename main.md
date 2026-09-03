@@ -269,3 +269,15 @@ awk '/^>longinsert_NODE_2_length_1755/{flag=1; print; next} /^>/{flag=0} flag'  
 I then made a custom script to extract specific fasta files that i want to blast. For my pilot sample it resulted in 5 sequences 
 
 Hippophae rhamnoides was detected via two distinct ITS sequence variants: (1) a dominant, high-identity variant (99.27% to reference, longinsert_NODE_2, depth 5,485x) and (2) a divergent variant with a real reference-coverage gap (86.75% best identity, depth ~110x combined), independently reconstructed by both assembly branches from different read populations, confirming it's a genuine sequence rather than an assembly artifact.
+
+I used this pipeline to scale it to all 18 samples:
+```
+snakemake -j 30 --scheduler greedy
+# snakemake -j 30 --forcerun its_subset_fasta --scheduler greedy              # when my run crashed i re-ran the specific bit that wasn't working properly; i fixed the code first tho
+chmod +x scripts/run_blast_all_samples.sh
+./scripts/run_blast_all_samples.sh pipeline_out blast_results
+python3 scripts/summarize_blast_hits.py --blast-dir blast_results  --out blast_results/summary.tsv --top-n 5
+python3 scripts/build_final_report.py  --blast-summary blast_results/summary.tsv  --pipeline-out pipeline_out --out final_report.tsv
+python3 scripts/genus_rollup.py --report final_report.tsv --out genus_summary.tsv
+python3 scripts/pivot_genus_matrix.py --genus-summary genus_summary.tsv --out final_matrix.tsv
+```
