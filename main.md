@@ -280,4 +280,29 @@ python3 scripts/summarize_blast_hits.py --blast-dir blast_results  --out blast_r
 python3 scripts/build_final_report.py  --blast-summary blast_results/summary.tsv  --pipeline-out pipeline_out --out final_report.tsv
 python3 scripts/genus_rollup.py --report final_report.tsv --out genus_summary.tsv
 python3 scripts/pivot_genus_matrix.py --genus-summary genus_summary.tsv --out final_matrix.tsv
+python3 scripts/per_sample_species_report.py \
+  --report final_report.tsv \
+  --out per_sample_species.md
+```
+
+I redid the taxonomy bit with LCA:
+```
+wget https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz
+mkdir -p taxdump && tar -xzf taxdump.tar.gz -C taxdump
+```
+```
+chmod +x scripts/fetch_staxids.sh
+./scripts/fetch_staxids.sh blast_results blast_results/accession_taxid_lookup.tsv
+```
+```
+python3 scripts/lca_assign.py \
+  --blast-dir blast_results \
+  --taxid-lookup blast_results/accession_taxid_lookup.tsv \
+  --taxdump-dir taxdump \
+  --out blast_results/lca_summary.tsv
+
+python3 scripts/build_final_report_lca.py \
+  --lca-summary blast_results/lca_summary.tsv \
+  --pipeline-out pipeline_out \
+  --out final_report_lca.tsv
 ```
