@@ -313,3 +313,55 @@ I redid taxonomy again with Megan LCA:
 chmod +x scripts/run_blast_for_megan.sh
 nohup ./scripts/run_blast_for_megan.sh pipeline_out blast_results_megan > blast_megan_run.log 2>&1 &
 ```
+
+Chcking number of reads at different stages:
+```
+python3 scripts/plot_read_counts.py --pipeline-out pipeline_out --out read_counts.png
+```
+
+```out
+sample                 raw_reads   after_fastp  survival%    dup%
+-----------------------------------------------------------------
+18S-3_S41                    432           174      40.3%     0.0  <-- LOW YIELD
+18S-9_S38                    738           302      40.9%     0.5  <-- LOW YIELD
+18S-1_S37                    758           310      40.9%     1.1  <-- LOW YIELD
+18S-31_S33                   990           424      42.8%     0.0  <-- LOW YIELD
+18S-25_S46                 2,064           992      48.1%     2.2  <-- LOW YIELD
+18S-23_S45                 4,622         1,861      40.3%     0.7  <-- LOW YIELD
+18S-30_S32                22,724         8,888      39.1%     1.6
+18S-17_S40                24,616        10,597      43.0%     6.1
+18S-32_S44                25,888        10,919      42.2%     5.9
+18S-4_S47                 63,030        29,128      46.2%     7.9
+18S-37_S42                79,696        34,221      42.9%     8.2
+18S-36_S36                93,348        38,312      41.0%    15.0
+ONplants-16_S55          169,892        39,536      23.3%    15.9
+18S-34_S43               178,614        82,834      46.4%    25.6
+18S-13_S39               225,674       104,932      46.5%     8.5
+ONplants-11_S50          236,526        58,270      24.6%    13.7
+ONplants-6_S45           238,216        58,527      24.6%    12.2
+ONplants-10_S49          245,332        62,021      25.3%    17.6
+ONplants-12_S51          256,376        60,403      23.6%    12.6
+ONplants-13_S52          266,090        68,629      25.8%    21.3
+ONplants-15_S54          271,470        73,136      26.9%    13.7
+ONplants-9_S48           285,606        76,823      26.9%    15.6
+ONplants-7_S46           288,622        82,154      28.5%    23.4
+ONplants-8_S47           304,592        88,414      29.0%    19.3
+ONplants-3_S42           309,536        81,984      26.5%    14.5
+ONplants-18_S57          318,142        85,287      26.8%    12.8
+ONplants-14_S53          339,770        87,903      25.9%    17.2
+ONplants-17_S56          365,126        89,526      24.5%    16.5
+ONplants-1_S40           369,168       113,314      30.7%    26.2
+ONplants-5_S44           396,468       108,583      27.4%    19.4
+ONplants-2_S41           418,002       110,232      26.4%    19.9
+ONplants-4_S43           440,344       134,108      30.5%    29.0
+
+Saved plot -> read_counts.png
+
+6 sample(s) at or below the 5,000-read threshold:
+  - 18S-3_S41
+  - 18S-9_S38
+  - 18S-1_S37
+  - 18S-31_S33
+  - 18S-25_S46
+  - 18S-23_S45
+```
