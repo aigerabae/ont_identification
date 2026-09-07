@@ -273,6 +273,7 @@ Hippophae rhamnoides was detected via two distinct ITS sequence variants: (1) a 
 I used this pipeline to scale it to all 18 samples:
 ```
 snakemake -j 30 --scheduler greedy
+# snakemake -j 30 -k --rerun-incomplete --scheduler greedy
 # snakemake -j 30 --forcerun its_subset_fasta --scheduler greedy              # when my run crashed i re-ran the specific bit that wasn't working properly; i fixed the code first tho
 chmod +x scripts/run_blast_all_samples.sh
 ./scripts/run_blast_all_samples.sh pipeline_out blast_results
@@ -305,4 +306,10 @@ python3 scripts/build_final_report_lca.py \
   --lca-summary blast_results/lca_summary.tsv \
   --pipeline-out pipeline_out \
   --out final_report_lca.tsv
+```
+
+I redid taxonomy again with Megan LCA:
+```
+chmod +x scripts/run_blast_for_megan.sh
+nohup ./scripts/run_blast_for_megan.sh pipeline_out blast_results_megan > blast_megan_run.log 2>&1 &
 ```
