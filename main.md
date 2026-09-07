@@ -365,3 +365,61 @@ Saved plot -> read_counts.png
   - 18S-25_S46
   - 18S-23_S45
 ```
+
+```
+python3 scripts/check_itsx_success.py --pipeline-out pipeline_out
+```
+
+```
+sample              ITSx ran?     input_seqs  its_detected    rate
+--------------------------------------------------------------------
+18S-1_S37           NO (missing)           -             -       -
+18S-31_S33          NO (missing)           -             -       -
+18S-3_S41           NO (missing)           -             -       -
+18S-9_S38           NO (missing)           -             -       -
+18S-13_S39          yes                  378             0    0.0%  <-- ZERO ITS FOUND
+18S-17_S40          yes                    7             0    0.0%  <-- ZERO ITS FOUND
+18S-23_S45          yes                    9             0    0.0%  <-- ZERO ITS FOUND
+18S-25_S46          yes                    3             0    0.0%  <-- ZERO ITS FOUND
+18S-32_S44          yes                   17             0    0.0%  <-- ZERO ITS FOUND
+18S-34_S43          yes                    8             0    0.0%  <-- ZERO ITS FOUND
+18S-37_S42          yes                   17             0    0.0%  <-- ZERO ITS FOUND
+18S-4_S47           yes                   33             0    0.0%  <-- ZERO ITS FOUND
+ONplants-16_S55     yes                  325             1    0.3%
+ONplants-10_S49     yes                  581             3    0.5%
+ONplants-7_S46      yes                  575             4    0.7%
+ONplants-2_S41      yes                  257             2    0.8%
+ONplants-14_S53     yes                  274             4    1.5%
+ONplants-5_S44      yes                  166             3    1.8%
+ONplants-1_S40      yes                  246             5    2.0%
+ONplants-8_S47      yes                  223             5    2.2%
+ONplants-13_S52     yes                  123             3    2.4%
+ONplants-17_S56     yes                  243             7    2.9%
+ONplants-11_S50     yes                  174             6    3.4%
+ONplants-4_S43      yes                  151             7    4.6%
+18S-36_S36          yes                   93            10   10.8%
+ONplants-18_S57     yes                  997           161   16.1%
+ONplants-15_S54     yes                  454           113   24.9%
+ONplants-6_S45      yes                  399           100   25.1%
+ONplants-9_S48      yes                  309            84   27.2%
+ONplants-3_S42      yes                 1173           349   29.8%
+ONplants-12_S51     yes                  610           234   38.4%
+18S-30_S32          yes                   39            17   43.6%
+
+4 sample(s) where ITSx never ran or didn't finish
+8 sample(s) where ITSx ran fine but found zero ITS-flagged contigs
+20 sample(s) with normal ITS detection
+```
+
+Re-running bl
+
+chmod +x scripts/run_blast_for_megan.sh scripts/run_megan_lca_all.sh
+
+# 1) BLAST every sample's ITS-extracted contigs in MEGAN-compatible format
+# (automatically skips your 4 missing + 8 zero-ITS samples -- nothing to BLAST for them)
+nohup ./scripts/run_blast_for_megan.sh pipeline_out blast_results_megan > blast_megan_run.log 2>&1 &
+
+# wait for that to finish (check with: tail -f blast_megan_run.log), then:
+
+# 2) Run blast2lca on each sample's result
+./scripts/run_megan_lca_all.sh blast_results_megan /path/to/megan-map-XXXX.db megan_lca_results
