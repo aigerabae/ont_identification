@@ -423,3 +423,13 @@ nohup ./scripts/run_blast_for_megan.sh pipeline_out blast_results_megan > blast_
 
 # 2) Run blast2lca on each sample's result
 ./scripts/run_megan_lca_all.sh blast_results_megan /path/to/megan-map-XXXX.db megan_lca_results
+
+
+Reran the whole thing to get number of reads:
+```
+snakemake -j 30 -k --rerun-incomplete --scheduler greedy \
+  $(for d in pipeline_out/*/; do
+      s=$(basename "$d")
+      echo "/home/aygera/biostar/NCB/hp_august/pipeline/pipeline_out/${s}/qc/mapped_its.sorted.bam"
+    done)
+```
