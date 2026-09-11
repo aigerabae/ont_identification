@@ -1,0 +1,21 @@
+# ── Config for the mixed-species plant ITS pipeline ──
+# Edit `samples` to match your actual sample basenames (without _R1/_R2/.fastq.gz).
+# Edit paths to match your machine.
+
+raw_fastq_dir: "raw_fastqs"          # where ONplants-N_S..._R1_001.fastq.gz live
+outdir: "pipeline_out"               # everything the pipeline produces goes here
+threads: 30
+
+samples:
+  - ONplants-1_S40
+  - ONplants-2_S41
+  # - ONplants-3_S42
+  # ... add all 18 here, matching the R1/R2 filename prefix exactly
+
+# fastp QC settings
+fastp:
+  qualified_quality_phred: 20
+  length_required: 50
+
+# vsearch chimera detection: scale factor applied to SPAdes cov_ value to build ;size=
+chimera_size_scale: 10
