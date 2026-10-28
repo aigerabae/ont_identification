@@ -40,3 +40,10 @@ python3 db/validate_db.py --fasta db/build/refs.fasta --taxid-map db/build/refs.
   --max-queries 3000 --threads 8
 cat db/build/validation/validation_summary.txt
 ```
+
+
+Running anew:
+```
+cd ~/biostar/NCB/hp_august2 && conda activate plant_its
+snakemake --profile profiles/default --cores 16 --config 'samples=[ONplants-1_S40,18S-1_S37]' 2>&1 | tee trial.log
+```
