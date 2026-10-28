@@ -23,6 +23,20 @@ blastn -task blastn -db db/build/db/its_custom -query /tmp/q.fa -dust no -max_ta
 
 rm -f db/taxdump/taxdump.tar.gz         # previous download didn't complete so i am deleting previous run and re-downloading
 bash db/get_taxdump.sh
-bash db/build_human_index.sh
 ls db/taxdump/        # must list nodes.dmp names.dmp merged.dmp
+```
+
+Downloading human for contamination check:
+```
+conda activate plant_its
+bash db/build_human_index.sh 2>&1 | tee db/human_index.log
+```
+
+Validating the database (without humans):
+```
+cd ~/biostar/NCB/hp_august2 && conda activate plant_its
+python3 db/validate_db.py --fasta db/build/refs.fasta --taxid-map db/build/refs.taxid.map \
+  --blast-db db/build/db/its_custom --taxdump-dir db/taxdump --out db/build/validation \
+  --max-queries 3000 --threads 8
+cat db/build/validation/validation_summary.txt
 ```
