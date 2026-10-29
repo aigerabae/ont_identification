@@ -64,3 +64,6 @@ cat results/final/final_table.tsv
 ```
 snakemake --profile profiles/default --cores 32 2>&1 | tee full_run.log
 ```
+
+(may require something like this to specify the input files: sed -i 's#/path/to/raw_fastqs#/mnt/harddisk/biostar/NCB/hp_august/raw_fastqs#' config/config.yaml
+grep -n "raw_fastq_dir" config/config.yaml)
