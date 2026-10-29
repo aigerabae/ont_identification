@@ -47,3 +47,15 @@ Running anew:
 cd ~/biostar/NCB/hp_august2 && conda activate plant_its
 snakemake --profile profiles/default --cores 16 --config 'samples=[ONplants-1_S40,18S-1_S37]' 2>&1 | tee trial.log
 ```
+
+After 20 hours it's still not done; The control for ONplants-1_S40’s five ITS contigs took 5 h 53 min (17:03 → 22:56) for five sequences. NCBI queues each web BLAST job. The pipeline allows only one NCBI job at a time, as NCBI’s usage policy asks, so everything else waits (“Waiting for more resources” is normal). It is now working on the residual-reads control, which can mean up to 8 batches of 25 sequences, each possibly hours, and then the second sample’s jobs. So the remote control would take days for two samples and weeks for 32. It isn’t usable at full scale.
+
+
+
+I decided to revert back on the logic i used before and just add primers cutting using my primers + changing the database to local
+```
+conda activate plant_its
+snakemake --profile profiles/default --cores 16 --forcerun select_queries \
+  --config 'samples=[ONplants-1_S40,18S-1_S37]' 2>&1 | tee trial3.log
+cat results/final/final_table.tsv
+```
