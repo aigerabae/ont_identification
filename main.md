@@ -59,3 +59,8 @@ snakemake --profile profiles/default --cores 16 --forcerun select_queries \
   --config 'samples=[ONplants-1_S40,18S-1_S37]' 2>&1 | tee trial3.log
 cat results/final/final_table.tsv
 ```
+
+2 samples ran as expected. Now for the full 32 sample run:
+```
+snakemake --profile profiles/default --cores 32 2>&1 | tee full_run.log
+```
