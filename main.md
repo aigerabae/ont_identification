@@ -67,3 +67,12 @@ snakemake --profile profiles/default --cores 32 2>&1 | tee full_run.log
 
 (may require something like this to specify the input files: sed -i 's#/path/to/raw_fastqs#/mnt/harddisk/biostar/NCB/hp_august/raw_fastqs#' config/config.yaml
 grep -n "raw_fastq_dir" config/config.yaml)
+
+
+Rerun:
+```
+cd ~/biostar/NCB/hp_august2
+conda activate plant_its
+grep -A3 "^core_nt" config/config.yaml        # must show: mode: skip
+snakemake --profile profiles/default --cores 4 --forcerun lca_custom 2>&1 | tee rerun5.log
+```
