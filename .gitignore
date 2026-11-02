@@ -1,0 +1,23 @@
+# outputs and run state
+results/
+.snakemake/
+comparison/
+tests/work/
+diag_*.txt
+*.log
+nohup.out
+# databases (rebuilt with db/*.sh)
+db/build*/
+db/taxdump/
+db/human/
+# leftovers and backups
+*.zip
+update3/
+backup_before_rdna/
+*.bak
+*.before_*
+config/config.yaml.rdna
+__pycache__/
+*.pyc
+# secrets
+.ncbi_api_key

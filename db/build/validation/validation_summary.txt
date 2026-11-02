@@ -1,0 +1,6 @@
+LOO queries: 3000
+correct_genus	1832	61.1%
+correct_family	814	27.1%
+too_broad	320	10.7%
+wrong	34	1.1%
+queries whose own species was found at >=99.9% before filtering: 2991 / 3000

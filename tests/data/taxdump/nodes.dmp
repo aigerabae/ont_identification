@@ -1,0 +1,27 @@
+1	|	1	|	no rank	|		|
+131567	|	1	|	no rank	|		|
+2	|	131567	|	superkingdom	|		|
+2759	|	131567	|	superkingdom	|		|
+33090	|	2759	|	kingdom	|		|
+4751	|	2759	|	kingdom	|		|
+33208	|	2759	|	kingdom	|		|
+9604	|	33208	|	family	|		|
+9605	|	9604	|	genus	|		|
+9606	|	9605	|	species	|		|
+543	|	2	|	family	|		|
+561	|	543	|	genus	|		|
+562	|	561	|	species	|		|
+900001	|	33090	|	family	|		|
+900002	|	900001	|	genus	|		|
+900003	|	900002	|	species	|		|
+900004	|	900002	|	species	|		|
+900005	|	900002	|	species	|		|
+900031	|	900003	|	subspecies	|		|
+900011	|	33090	|	family	|		|
+900012	|	900011	|	genus	|		|
+900013	|	900012	|	species	|		|
+900014	|	900012	|	species	|		|
+900020	|	900011	|	genus	|		|
+900021	|	900020	|	species	|		|
+900049	|	4751	|	genus	|		|
+900050	|	900049	|	species	|		|

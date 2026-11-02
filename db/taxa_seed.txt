@@ -1,0 +1,30 @@
+# taxa_seed.txt -- one Entrez organism name per line (family, tribe, genus ...).
+# Each name is expanded to ALL its ITS records in GenBank, so the database covers
+# related species and potentially present taxa, not only the ones already seen.
+# Lines starting with '#' are ignored.  Edit freely; rebuild with db/build_custom_db.sh.
+# MAX_PER_TAXON (default 20000) caps very large groups.
+
+# --- taxa found in the 32 project samples (whole group, not only the species hit) ---
+Elaeagnaceae
+Crassulaceae
+Cardueae
+Rosaceae
+Lactuca
+# --- fungal families seen as secondary signal (also covered by the fungal decoys) ---
+Cladosporiaceae
+Pleosporaceae
+Nectriaceae
+# --- common herbal-medicine / adulterant families (literature-derived; trim as needed) ---
+Lamiaceae
+Apiaceae
+Hypericum
+Cannabaceae
+Cichorieae
+Anthemideae
+Ginkgo
+Panax
+Glycyrrhiza
+Valeriana
+Zingiberaceae
+Ranunculaceae
+Fabaceae

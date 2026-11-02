@@ -1,0 +1,8 @@
+# decoys.txt -- NON-target sequences kept in the database so that off-target
+# reads are assigned to what they really are instead of being forced onto the
+# nearest plant. Tab-separated: label <TAB> Entrez query <TAB> max records
+# Lines starting with '#' are ignored.
+human_rdna_repeat	U13369.1[Accession]	1
+human_ITS	"Homo sapiens"[Organism] AND (internal transcribed spacer[Title] OR "ribosomal DNA"[Title] OR "45S"[Title]) AND 200:60000[SLEN] NOT (genome[Title] OR chromosome[Title] OR scaffold[Title])	500
+insect_ITS	"Insecta"[Organism] AND (internal transcribed spacer[Title] OR ITS1[Title] OR ITS2[Title]) AND 200:10000[SLEN] NOT (genome[Title] OR chromosome[Title] OR scaffold[Title])	3000
+fungi_general_ITS	"Fungi"[Organism] AND (internal transcribed spacer[Title] OR ITS1[Title] OR ITS2[Title]) AND 200:10000[SLEN] NOT (genome[Title] OR chromosome[Title] OR scaffold[Title])	8000

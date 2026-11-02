@@ -1,0 +1,9 @@
+build_date: 2026-10-30T09:54:27Z
+derived_from: db/build (build of 2026-10-28; md5 refs d17cc5625b7dd5413ecd1d04aa77f3ce)
+length_filter: on  max_spacer: 450  max_its: 1000  exempt_taxids: 33208,1437180  taxdump: db/taxdump
+n_references_before_filter: 108902  n_dropped_by_filter: 68
+blast: blastn: 2.17.0+
+python: Python 3.11.18
+n_reference_sequences: 108834
+md5_refs_fasta: 0346d6202a0d84e27ed59632c5b00ef7
+md5_taxid_map: 433690d73f1f3cdb22711e6aeac462cf

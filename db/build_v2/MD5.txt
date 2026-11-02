@@ -1,0 +1,2 @@
+0346d6202a0d84e27ed59632c5b00ef7  db/build_v2/refs.fasta
+433690d73f1f3cdb22711e6aeac462cf  db/build_v2/refs.taxid.map

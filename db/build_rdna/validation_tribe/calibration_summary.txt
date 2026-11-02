@@ -1,0 +1,31 @@
+rDNA LOO calibration: 2293 plant references, 6162 fragments, sizes [1000, 150], blastn -task blastn, max_target_seqs 500, tie 0.02
+
+Verdict % per rank-cap scheme (species = own species hidden; genus = own genus hidden)
+rank_caps                           level        bp      n        correct_genus        correct_tribe       correct_family            too_broad  wrong_within_family         wrong_family
+species:101,genus:101,family:97     species    1000   3081                  0.0                 11.7                 62.8                 24.1                  0.3                  1.1
+species:101,genus:101,family:97     species     150   3081                  0.0                  7.0                 48.0                 43.8                  0.1                  1.0
+species:101,genus:101,family:95     species    1000   3081                  0.0                 12.2                 67.3                 19.1                  0.3                  1.1
+species:101,genus:101,family:95     species     150   3081                  0.0                  7.4                 51.3                 40.2                  0.1                  1.0
+species:101,genus:101,tribe:97,family:95species    1000   3081                  0.0                 33.0                 46.4                 19.1                  0.4                  1.1
+species:101,genus:101,tribe:97,family:95species     150   3081                  0.0                 25.6                 32.9                 40.2                  0.3                  1.0
+species:101,genus:101,tribe:95,family:95species    1000   3081                  0.0                 35.6                 43.8                 19.1                  0.5                  1.1
+species:101,genus:101,tribe:95,family:95species     150   3081                  0.0                 27.8                 30.7                 40.2                  0.3                  1.0
+species:101,genus:101,family:93     species    1000   3081                  0.0                 12.5                 69.2                 16.8                  0.4                  1.1
+species:101,genus:101,family:93     species     150   3081                  0.0                  7.6                 53.3                 38.0                  0.1                  1.0
+species:101,genus:101,tribe:95,family:93species    1000   3081                  0.0                 35.6                 46.0                 16.8                  0.5                  1.1
+species:101,genus:101,tribe:95,family:93species     150   3081                  0.0                 27.8                 32.9                 38.0                  0.3                  1.0
+species:101,genus:101,family:97     genus      1000   3081                  0.0                 11.0                 32.1                 53.9                  0.4                  2.5
+species:101,genus:101,family:97     genus       150   3081                  0.0                  6.4                 22.8                 67.5                  0.5                  2.9
+species:101,genus:101,family:95     genus      1000   3081                  0.0                 12.8                 37.5                 46.4                  0.6                  2.6
+species:101,genus:101,family:95     genus       150   3081                  0.0                  7.5                 26.5                 62.6                  0.6                  2.9
+species:101,genus:101,tribe:97,family:95genus      1000   3081                  0.0                 14.9                 34.9                 46.4                  1.2                  2.6
+species:101,genus:101,tribe:97,family:95genus       150   3081                  0.0                 10.2                 23.1                 62.6                  1.2                  2.9
+species:101,genus:101,tribe:95,family:95genus      1000   3081                  0.0                 18.8                 30.8                 46.4                  1.3                  2.6
+species:101,genus:101,tribe:95,family:95genus       150   3081                  0.0                 12.9                 20.1                 62.6                  1.5                  2.9
+species:101,genus:101,family:93     genus      1000   3081                  0.0                 14.2                 41.1                 41.3                  0.8                  2.6
+species:101,genus:101,family:93     genus       150   3081                  0.0                  8.5                 29.0                 59.0                  0.6                  2.9
+species:101,genus:101,tribe:95,family:93genus      1000   3081                  0.0                 18.8                 35.9                 41.3                  1.4                  2.6
+species:101,genus:101,tribe:95,family:93genus       150   3081                  0.0                 12.9                 23.7                 59.0                  1.5                  2.9
+
+Uncapped calls by best identity (verdict %): see identity_bins.tsv
+Per target group with species:101,genus:101,tribe:95,family:95: see target_groups.tsv

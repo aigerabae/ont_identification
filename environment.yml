@@ -1,0 +1,19 @@
+name: plant_its
+channels: [conda-forge, bioconda]
+dependencies:      # versions = those used for the end-to-end test
+  - python=3.11
+  - snakemake=8.30
+  - fastp=1.4
+  - cutadapt=5.2
+  - bbmap=40.05
+  - spades=4.3
+  - cd-hit=4.8.1
+  - vsearch=2.32
+  - itsx=1.1.3
+  - hmmer=3.4
+  - bowtie2=2.5.5
+  - samtools=1.24
+  - blast=2.17
+  - entrez-direct=26.0
+  - openjdk
+  - curl

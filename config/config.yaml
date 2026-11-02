@@ -1,0 +1,156 @@
+# =====================================================================
+# plant_its_pipeline -- configuration
+# Run from the repository root:  snakemake --profile profiles/default
+# Every path below is relative to the repository root unless absolute.
+# =====================================================================
+
+# ---- input / output -------------------------------------------------------
+raw_fastq_dir: "/mnt/harddisk/biostar/NCB/hp_august/raw_fastqs"
+fastq_r1: "{sample}_L001_R1_001.fastq.gz"
+fastq_r2: "{sample}_L001_R2_001.fastq.gz"
+outdir: "results"
+report_language: "ru"          # ru | en  (headers + rank names of final_table.tsv)
+
+threads:
+  heavy: 16                    # SPAdes, bowtie2 human screen, ITSx
+  light: 4
+
+samples:
+  - ONplants-1_S40
+  - ONplants-2_S41
+  - ONplants-3_S42
+  - ONplants-4_S43
+  - ONplants-5_S44
+  - ONplants-6_S45
+  - ONplants-7_S46
+  - ONplants-8_S47
+  - ONplants-9_S48
+  - ONplants-10_S49
+  - ONplants-11_S50
+  - ONplants-12_S51
+  - ONplants-13_S52
+  - ONplants-14_S53
+  - ONplants-15_S54
+  - ONplants-16_S55
+  - ONplants-17_S56
+  - ONplants-18_S57
+  - 18S-1_S37
+  - 18S-3_S41
+  - 18S-4_S47
+  - 18S-9_S38
+  - 18S-13_S39
+  - 18S-17_S40
+  - 18S-23_S45
+  - 18S-25_S46
+  - 18S-30_S32
+  - 18S-31_S33
+  - 18S-32_S44
+  - 18S-34_S43
+  - 18S-36_S36
+  - 18S-37_S42
+
+# ---- primer removal (Cutadapt) ------------------------------------------------
+# Give the full Cutadapt adapter/primer arguments for YOUR library design, e.g.
+#   "-g ^FWDSEQ -G ^REVSEQ -a RC_OF_REV -A RC_OF_FWD -e 0.1 -O 12"
+# Primers from the lab's 18S-cistron primer table (config/primers.fasta, 33 oligos, sets 1-3).
+# Each is trimmed only if it sits at the very START of a read (anchored ^), on R1 and R2 alike,
+# so reads that begin inside the amplicon are untouched. Empty string = skip the step.
+primers:
+  cutadapt_args: "-g file:config/primers.fasta -G file:config/primers.fasta -e 0.1"
+
+fastp:
+  qualified_quality_phred: 20
+  length_required: 50
+
+clumpify_memory_gb: ""          # e.g. 16 -> clumpify -Xmx16g (empty = BBTools auto-detect)
+
+assembly:
+  chimera_size_scale: 10       # ;size= = SPAdes cov_ x this (vsearch needs abundance)
+
+itsx:
+  taxa: "all"                  # ITSx -t option
+
+# ---- primary classifier: custom ITS reference database ----------------------------
+database:
+  blast_db: "db/build_v2/db/its_custom"     # prefix written by db/build_custom_db.sh
+  taxdump_dir: "db/taxdump"              # written by db/get_taxdump.sh
+
+classification:
+  min_informative_rank: family           # calls broader than this are not reported as taxa
+  fallback_contigs_min_pident: 90
+  tie_fraction: 0.02                     # hits within 2% of top bit score are tied -> LCA
+  divergence_thresholds: "99.5,97,93"    # identical / low / moderate / high (percent identity)
+  # identity caps: if best identity < cap, the call moves up one rank (guards against
+  # forcing a taxon that is missing from the database onto its nearest relative)
+  contigs:                               # ITS regions or fallback contigs
+    min_bitscore: 100
+    max_evalue: 1.0e-15
+    min_pident: 0
+    min_qcov: 50
+    rank_caps: "species:97,genus:90,family:80"
+    max_target_seqs: 500
+  residual:                              # short reads that did not map to a contig
+    min_bitscore: 100
+    max_evalue: 1.0e-10
+    min_pident: 90
+    min_qcov: 80
+    rank_caps: "species:97,genus:90,family:80"
+    max_target_seqs: 200
+  control:                               # core_nt control search
+    min_bitscore: 100
+    max_evalue: 1.0e-15
+    min_pident: 0
+    min_qcov: 50
+    rank_caps: ""
+    max_target_seqs: 50
+
+# ---- SECONDARY classifier: 18S/28S (nuclear rDNA) database, only where ITS gives no call ----------
+# Used for (a) fallback contigs of samples without ITS and (b) residual reads without an informative
+# ITS call. A read that has an ITS call always keeps it. 18S/28S are conserved, so the caps are strict:
+# species/genus calls are never made ("101" = impossible identity); family / subfamily / tribe needs
+# >= 97 % identity. Conservative values -- to be replaced by the LOO calibration
+# (db/validate_rdna_db.py -> db/build_rdna/validation/calibration_summary.txt).
+rdna:
+  enabled: true
+  blast_db: "db/build_rdna/db/rdna_custom"     # prefix written by db/build_rdna_db.sh
+  task: "megablast"                            # high-identity search; far faster than -task blastn
+  contigs:
+    min_bitscore: 100
+    max_evalue: 1.0e-15
+    min_pident: 95
+    min_qcov: 50
+    rank_caps: "species:101,genus:101,tribe:95,family:95"
+    max_target_seqs: 1000                      # 18S/28S: hundreds of near-identical hits; too few -> LCA too narrow
+  residual:
+    min_bitscore: 100
+    max_evalue: 1.0e-10
+    min_pident: 95
+    min_qcov: 80
+    rank_caps: "species:101,genus:101,tribe:95,family:95"
+    max_target_seqs: 1000
+    max_unique: 50000                          # most abundant read sequences without an ITS call
+
+# ---- fallback contigs for samples where ITSx finds no ITS --------------------
+fallback:
+  top_n: 10
+  min_len: 100
+
+# ---- read-level classification of reads not explained by contigs -------------------
+residual:
+  max_unique_sequences: 50000
+
+# ---- human contamination screen (bowtie2 against a human reference) --------------
+human_screen:
+  enabled: true
+  bowtie2_index: "db/human/GRCh38"       # built by db/build_human_index.sh
+
+# ---- control search against general NCBI core_nt ---------------------------------
+core_nt:
+  mode: "skip"                 # skip (default: custom database only) | remote (NCBI web, very slow) | local (own core_nt copy)
+  local_db: "core_nt"          # used when mode: local (BLASTDB must point to it)
+  entrez_query: ""             # remote only, e.g. "eukaryota[organism]"
+  max_queries_contigs: 500
+  max_queries_residual: 200    # most abundant unique reads without a custom-DB call
+  chunk_size: 25               # remote: sequences per submission
+  sleep_between_submissions: 15
+  validate_all_its_contigs: true   # also BLAST every ITS region -> concordance.tsv

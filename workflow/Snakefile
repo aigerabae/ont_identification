@@ -1,0 +1,675 @@
+"""
+plant_its_pipeline -- species composition of mixed plant material from
+18S-ITS1-5.8S-ITS2-28S rRNA-cistron amplicon reads (Illumina paired-end).
+
+Design rules that make this workflow robust for all 32 samples:
+  * every rule produces ALL of its declared outputs on every branch (possibly empty),
+    so a sample with a failed assembly or no ITS never breaks the run;
+  * what happens to a sample is decided by file content (select_queries.py),
+    not by hand-edited sample lists.
+
+Per-sample flow
+  primer trim (optional) -> fastp trim+merge -> dedup (for assembly only)
+  -> split assembly (long-insert / short-insert) -> cd-hit -> chimera filter
+  -> ITSx -> best ITS region per contig
+  -> queries: ITS regions | top contigs (no ITS) | nothing (no assembly)
+  -> map ALL post-fastp reads (not the deduplicated copies) to the query contigs
+  -> human screen (bowtie2 vs human reference)
+  -> residual reads (not mapped to a contig, not human) dereplicated
+  -> PRIMARY classification: local BLAST against the custom ITS database + LCA
+  -> CONTROL: core_nt BLAST of what the custom database could not explain
+  -> SECONDARY: 18S/28S (rDNA) database for fallback contigs and for residual reads
+     without an ITS call (family/tribe level only; never overrides an ITS call)
+  -> per-sample read accounting -> final tables
+
+Run (from the repository root):
+    snakemake --profile profiles/default
+See README.md and docs/.
+"""
+import os
+
+configfile: "config/config.yaml"
+
+SCRIPTS = os.path.abspath(os.path.join(workflow.basedir, "..", "scripts"))
+OUT = config["outdir"].rstrip("/")
+SAMPLES = config["samples"]
+HEAVY = config["threads"]["heavy"]
+LIGHT = config["threads"]["light"]
+CL = config["classification"]
+CN = config["core_nt"]
+# secondary 18S/28S database (optional section; missing or enabled: false -> empty outputs, no BLAST)
+RD = config.get("rdna", {}) or {}
+RD_ON = bool(RD.get("enabled", False))
+RD_DEFAULT = {"min_bitscore": 100, "max_evalue": 1e-15, "min_pident": 97, "min_qcov": 50,
+              "rank_caps": "species:101,genus:101,family:97", "max_target_seqs": 1000, "max_unique": 20000}
+
+
+def RDP(tier):
+    return {**RD_DEFAULT, **(RD.get(tier) or {})}
+# BBTools auto-detects memory and can pick far too little in containers/HPC jobs:
+# set clumpify_memory_gb in config.yaml to pin it (empty = auto).
+CLUMPIFY_MEM = f"-Xmx{config['clumpify_memory_gb']}g" if config.get("clumpify_memory_gb") else ""
+
+wildcard_constraints:
+    sample=r"[^/]+",
+    tier="contigs|residual",
+    rtier="contigs|residual",
+    unit="longinsert|shortinsert",
+
+
+def S(sample, *parts):
+    return os.path.join(OUT, sample, *parts)
+
+
+# ---------------------------------------------------------------------------
+rule all:
+    input:
+        f"{OUT}/final/final_table.tsv",
+        f"{OUT}/final/final_table_detailed.tsv",
+        f"{OUT}/final/qc_summary.tsv",
+        f"{OUT}/final/versions.txt",
+        ([f"{OUT}/final/concordance.tsv"] if CN["validate_all_its_contigs"] and CN["mode"] != "skip" else []),
+
+
+# ---- 1. reads ---------------------------------------------------------------------
+rule trim_primers:
+    input:
+        r1=lambda wc: os.path.join(config["raw_fastq_dir"], config["fastq_r1"].format(sample=wc.sample)),
+        r2=lambda wc: os.path.join(config["raw_fastq_dir"], config["fastq_r2"].format(sample=wc.sample)),
+    output:
+        r1=f"{OUT}/{{sample}}/reads/primer_trimmed_R1.fastq.gz",
+        r2=f"{OUT}/{{sample}}/reads/primer_trimmed_R2.fastq.gz",
+        log=f"{OUT}/{{sample}}/reads/primer_trim.log",
+    params:
+        args=config["primers"]["cutadapt_args"],
+    threads: LIGHT
+    shell:
+        r"""
+        if [ -n "{params.args}" ]; then
+            cutadapt {params.args} -j {threads} -o {output.r1} -p {output.r2} {input.r1} {input.r2} > {output.log}
+        else
+            # symlink (cheap); fall back to a copy on file systems without symlink support
+            ln -sf "$(readlink -f {input.r1})" {output.r1} 2>/dev/null || cp {input.r1} {output.r1}
+            ln -sf "$(readlink -f {input.r2})" {output.r2} 2>/dev/null || cp {input.r2} {output.r2}
+            echo "Primer trimming NOT applied (primers.cutadapt_args is empty)" > {output.log}
+        fi
+        """
+
+
+rule fastp_merge:
+    input:
+        r1=rules.trim_primers.output.r1,
+        r2=rules.trim_primers.output.r2,
+    output:
+        merged=f"{OUT}/{{sample}}/reads/merged.fastq.gz",
+        r1=f"{OUT}/{{sample}}/reads/unmerged_R1.fastq.gz",
+        r2=f"{OUT}/{{sample}}/reads/unmerged_R2.fastq.gz",
+        json=f"{OUT}/{{sample}}/reads/fastp.json",
+        html=f"{OUT}/{{sample}}/reads/fastp.html",
+    params:
+        q=config["fastp"]["qualified_quality_phred"],
+        L=config["fastp"]["length_required"],
+    threads: LIGHT
+    shell:
+        """
+        fastp -i {input.r1} -I {input.r2} --merge --merged_out {output.merged} \
+          --out1 {output.r1} --out2 {output.r2} --detect_adapter_for_pe \
+          --qualified_quality_phred {params.q} --length_required {params.L} \
+          --thread {threads} --json {output.json} --html {output.html}
+        """
+
+
+rule count_reads:
+    input:
+        merged=rules.fastp_merge.output.merged,
+        r1=rules.fastp_merge.output.r1,
+        r2=rules.fastp_merge.output.r2,
+        json=rules.fastp_merge.output.json,
+    output:
+        f"{OUT}/{{sample}}/reads/read_counts.json",
+    shell:
+        "python3 {SCRIPTS}/count_reads.py --merged {input.merged} --r1 {input.r1} --r2 {input.r2} "
+        "--fastp-json {input.json} --out {output}"
+
+
+# De-duplicated copies are used for ASSEMBLY ONLY. Quantification uses the
+# non-deduplicated reads (collision probability during dedup rises with depth,
+# which would compress real abundance differences).
+rule dedup_unmerged:
+    input:
+        r1=rules.fastp_merge.output.r1,
+        r2=rules.fastp_merge.output.r2,
+    output:
+        r1=f"{OUT}/{{sample}}/reads/dedup_unmerged_R1.fastq.gz",
+        r2=f"{OUT}/{{sample}}/reads/dedup_unmerged_R2.fastq.gz",
+    params:
+        mem=CLUMPIFY_MEM,
+    shell:
+        r"""
+        if [ -n "$(zcat {input.r1} | head -c 1 || true)" ]; then
+            clumpify.sh {params.mem} in1={input.r1} in2={input.r2} out1={output.r1} out2={output.r2} dedupe
+        else
+            gzip -c < /dev/null > {output.r1}; gzip -c < /dev/null > {output.r2}
+        fi
+        """
+
+
+rule dedup_merged:
+    input:
+        rules.fastp_merge.output.merged,
+    output:
+        f"{OUT}/{{sample}}/reads/dedup_merged.fastq.gz",
+    params:
+        mem=CLUMPIFY_MEM,
+    shell:
+        r"""
+        if [ -n "$(zcat {input} | head -c 1 || true)" ]; then
+            clumpify.sh {params.mem} in={input} out={output} dedupe
+        else
+            gzip -c < /dev/null > {output}
+        fi
+        """
+
+
+# ---- 2. assembly (never fails the workflow) -------------------------------------------
+rule assemble_longinsert:
+    input:
+        r1=rules.dedup_unmerged.output.r1,
+        r2=rules.dedup_unmerged.output.r2,
+    output:
+        contigs=f"{OUT}/{{sample}}/assembly/longinsert.contigs.fasta",
+        status=f"{OUT}/{{sample}}/assembly/longinsert.status",
+        log=f"{OUT}/{{sample}}/assembly/longinsert.spades.log",
+    params:
+        d=lambda wc: f"{OUT}/{wc.sample}/assembly/longinsert_tmp",
+    threads: HEAVY
+    shell:
+        r"""
+        rm -rf {params.d}; status="failed: no input reads"
+        if [ -n "$(zcat {input.r1} | head -c 1 || true)" ]; then
+            if metaspades.py -1 {input.r1} -2 {input.r2} -o {params.d} -t {threads} > {output.log}.stdout 2>&1 \
+               && [ -s {params.d}/contigs.fasta ]; then
+                status="ok"
+            else
+                status="failed: metaSPAdes error (see log)"
+            fi
+        fi
+        if [ "$status" = "ok" ]; then cp {params.d}/contigs.fasta {output.contigs}; else : > {output.contigs}; fi
+        {{ [ -f {params.d}/spades.log ] && cat {params.d}/spades.log; [ -f {output.log}.stdout ] && tail -n 30 {output.log}.stdout; }} > {output.log} || true
+        rm -rf {params.d} {output.log}.stdout || true
+        echo "$status" > {output.status}
+        """
+
+
+rule assemble_shortinsert:
+    input:
+        rules.dedup_merged.output,
+    output:
+        contigs=f"{OUT}/{{sample}}/assembly/shortinsert.contigs.fasta",
+        status=f"{OUT}/{{sample}}/assembly/shortinsert.status",
+        log=f"{OUT}/{{sample}}/assembly/shortinsert.spades.log",
+    params:
+        d=lambda wc: f"{OUT}/{wc.sample}/assembly/shortinsert_tmp",
+    threads: HEAVY
+    shell:
+        r"""
+        rm -rf {params.d}; status="failed: no input reads"
+        if [ -n "$(zcat {input} | head -c 1 || true)" ]; then
+            if spades.py -s {input} -o {params.d} --only-assembler -t {threads} > {output.log}.stdout 2>&1 \
+               && [ -s {params.d}/contigs.fasta ]; then
+                status="ok"
+            else
+                status="failed: SPAdes error (typically too few reads; see log)"
+            fi
+        fi
+        if [ "$status" = "ok" ]; then cp {params.d}/contigs.fasta {output.contigs}; else : > {output.contigs}; fi
+        {{ [ -f {params.d}/spades.log ] && cat {params.d}/spades.log; [ -f {output.log}.stdout ] && tail -n 30 {output.log}.stdout; }} > {output.log} || true
+        rm -rf {params.d} {output.log}.stdout || true
+        echo "$status" > {output.status}
+        """
+
+
+rule combine_contigs:
+    input:
+        long=rules.assemble_longinsert.output.contigs,
+        short=rules.assemble_shortinsert.output.contigs,
+    output:
+        f"{OUT}/{{sample}}/assembly/combined_nr.fasta",
+    params:
+        tmp=lambda wc: f"{OUT}/{wc.sample}/assembly/combined_tagged.tmp.fasta",
+    threads: LIGHT
+    shell:
+        r"""
+        {{ sed 's/^>/>longinsert_/' {input.long}; sed 's/^>/>shortinsert_/' {input.short}; }} > {params.tmp}
+        if [ -s {params.tmp} ]; then
+            cd-hit-est -i {params.tmp} -o {output} -c 1.0 -T {threads} -M 0 > /dev/null
+        else
+            : > {output}
+        fi
+        rm -f {params.tmp} {output}.clstr
+        """
+
+
+rule chimera_filter:
+    input:
+        rules.combine_contigs.output,
+    output:
+        nonchimeric=f"{OUT}/{{sample}}/chimera/nonchimeric.fasta",
+        chimeric=f"{OUT}/{{sample}}/chimera/chimeric.fasta",
+        report=f"{OUT}/{{sample}}/chimera/uchime_report.txt",
+    params:
+        scale=config["assembly"]["chimera_size_scale"],
+        d=lambda wc: f"{OUT}/{wc.sample}/chimera",
+    shell:
+        r"""
+        : > {output.chimeric}; : > {output.report}
+        if [ -s {input} ]; then
+            python3 {SCRIPTS}/annotate_size.py {input} {params.d}/sized.tmp {params.scale}
+            vsearch --sortbysize {params.d}/sized.tmp --output {params.d}/sorted.tmp --quiet
+            vsearch --uchime_denovo {params.d}/sorted.tmp --nonchimeras {params.d}/nonchim.tmp \
+                --chimeras {output.chimeric} --uchimeout {output.report} --uchimeout5 --quiet
+            sed 's/;size=[0-9]*//' {params.d}/nonchim.tmp > {output.nonchimeric}
+            rm -f {params.d}/*.tmp
+        else
+            : > {output.nonchimeric}
+        fi
+        """
+
+
+# ---- 3. ITS detection and extraction ---------------------------------------------------
+rule itsx:
+    input:
+        rules.chimera_filter.output.nonchimeric,
+    output:
+        positions=f"{OUT}/{{sample}}/itsx/its.positions.txt",
+        summary=f"{OUT}/{{sample}}/itsx/its.summary.txt",
+    params:
+        prefix=lambda wc: f"{OUT}/{wc.sample}/itsx/its",
+        taxa=config["itsx"]["taxa"],
+    threads: HEAVY
+    shell:
+        r"""
+        mkdir -p $(dirname {params.prefix})
+        if [ -s {input} ]; then
+            ITSx -i {input} -o {params.prefix} --cpu {threads} --preserve T --graphical F \
+                 --positions T --summary T --save_regions all -t {params.taxa} > {params.prefix}.stdout 2>&1
+        fi
+        touch {output.positions} {output.summary}
+        """
+
+
+rule extract_its:
+    input:
+        positions=rules.itsx.output.positions,
+        contigs=rules.chimera_filter.output.nonchimeric,
+    output:
+        regions=f"{OUT}/{{sample}}/its/its_regions.fasta",
+        contigs=f"{OUT}/{{sample}}/its/its_contigs.fasta",
+        log=f"{OUT}/{{sample}}/its/extraction_log.tsv",
+    params:
+        prefix=lambda wc: f"{OUT}/{wc.sample}/itsx/its",
+        d=lambda wc: f"{OUT}/{wc.sample}/its",
+    shell:
+        "python3 {SCRIPTS}/extract_its_regions.py --prefix {params.prefix} "
+        "--contigs {input.contigs} --outdir {params.d}"
+
+
+rule select_queries:
+    input:
+        regions=rules.extract_its.output.regions,
+        its_contigs=rules.extract_its.output.contigs,
+        contigs=rules.chimera_filter.output.nonchimeric,
+    output:
+        queries=f"{OUT}/{{sample}}/queries/queries.fasta",
+        ref=f"{OUT}/{{sample}}/queries/mapping_ref.fasta",
+        mode=f"{OUT}/{{sample}}/queries/mode.txt",
+    params:
+        d=lambda wc: f"{OUT}/{wc.sample}/queries",
+        n=config["fallback"]["top_n"],
+        m=config["fallback"]["min_len"],
+    shell:
+        "python3 {SCRIPTS}/select_queries.py --its-regions {input.regions} --its-contigs {input.its_contigs} "
+        "--contigs {input.contigs} --outdir {params.d} --top-n {params.n} --min-len {params.m}"
+
+
+# ---- 4. quantification: ALL post-fastp reads -> query contigs -------------------------------
+rule map_to_contigs:
+    input:
+        ref=rules.select_queries.output.ref,
+        r1=rules.fastp_merge.output.r1,
+        r2=rules.fastp_merge.output.r2,
+        merged=rules.fastp_merge.output.merged,
+    output:
+        bam=f"{OUT}/{{sample}}/quant/mapped.sorted.bam",
+        flagstat=f"{OUT}/{{sample}}/quant/flagstat.txt",
+        counts=f"{OUT}/{{sample}}/quant/contig_counts.tsv",
+    params:
+        idx=lambda wc: f"{OUT}/{wc.sample}/quant/ref_idx",
+    threads: LIGHT
+    shell:
+        r"""
+        if [ -s {input.ref} ]; then
+            bowtie2-build --quiet --threads {threads} {input.ref} {params.idx}
+            bash {SCRIPTS}/map_reads.sh {params.idx} {output.bam} {output.flagstat} \
+                {input.r1} {input.r2} {input.merged} {threads}
+            if [ -s {output.bam} ]; then
+                samtools idxstats {output.bam} | awk '$1!="*"{{print $1"\t"$3}}' > {output.counts}
+            else
+                : > {output.counts}
+            fi
+            rm -f {params.idx}*.bt2 {params.idx}*.bt2l
+        else
+            : > {output.bam}; : > {output.counts}
+            echo "NO_REFERENCE" > {output.flagstat}
+        fi
+        """
+
+
+rule human_screen:
+    input:
+        r1=rules.fastp_merge.output.r1,
+        r2=rules.fastp_merge.output.r2,
+        merged=rules.fastp_merge.output.merged,
+    output:
+        bam=f"{OUT}/{{sample}}/human/human.mapped.bam",
+        flagstat=f"{OUT}/{{sample}}/human/flagstat.txt",
+    params:
+        enabled=config["human_screen"]["enabled"],
+        idx=config["human_screen"]["bowtie2_index"],
+    threads: HEAVY
+    shell:
+        r"""
+        if [ "{params.enabled}" = "True" ]; then
+            if [ ! -f "{params.idx}.1.bt2" ] && [ ! -f "{params.idx}.1.bt2l" ]; then
+                echo "ERROR: human_screen.enabled but bowtie2 index '{params.idx}' not found. Run db/build_human_index.sh or set human_screen.enabled: false" >&2
+                exit 1
+            fi
+            bash {SCRIPTS}/map_reads.sh {params.idx} {output.bam}.all {output.flagstat} \
+                {input.r1} {input.r2} {input.merged} {threads} --no-unal
+            if [ -s {output.bam}.all ]; then samtools view -b -F 4 {output.bam}.all > {output.bam}; else : > {output.bam}; fi
+            rm -f {output.bam}.all {output.bam}.all.bai {output.bam}.all.bt2.log
+        else
+            : > {output.bam}; echo "HUMAN_SCREEN_DISABLED" > {output.flagstat}
+        fi
+        """
+
+
+rule residual_reads:
+    input:
+        r1=rules.fastp_merge.output.r1,
+        r2=rules.fastp_merge.output.r2,
+        merged=rules.fastp_merge.output.merged,
+        quant=rules.map_to_contigs.output.bam,
+        human=rules.human_screen.output.bam,
+    output:
+        fasta=f"{OUT}/{{sample}}/residual/residual_reads.fasta",
+        counts=f"{OUT}/{{sample}}/residual/residual_counts.tsv",
+        json=f"{OUT}/{{sample}}/residual/summary.json",
+    params:
+        n=config["residual"]["max_unique_sequences"],
+    shell:
+        "python3 {SCRIPTS}/residual_reads.py --r1 {input.r1} --r2 {input.r2} --merged {input.merged} "
+        "--quant-bam {input.quant} --human-bam {input.human} --max-unique {params.n} "
+        "--out-fasta {output.fasta} --out-counts {output.counts} --out-json {output.json}"
+
+
+# ---- 5. PRIMARY classification: local BLAST vs the custom ITS database + LCA ---------
+def tier_query(wc):
+    return (rules.select_queries.output.queries if wc.tier == "contigs"
+            else rules.residual_reads.output.fasta).format(sample=wc.sample)
+
+
+def tier_counts(wc):
+    return (rules.map_to_contigs.output.counts if wc.tier == "contigs"
+            else rules.residual_reads.output.counts).format(sample=wc.sample)
+
+
+rule blast_custom:
+    input:
+        q=tier_query,
+    output:
+        f"{OUT}/{{sample}}/classification/custom_{{tier}}.blast.tsv",
+    params:
+        db=config["database"]["blast_db"],
+        maxt=lambda wc: CL[wc.tier]["max_target_seqs"],
+    threads: LIGHT
+    shell:
+        r"""
+        if [ -s {input.q} ]; then
+            blastdbcmd -db {params.db} -info > /dev/null || {{ echo "custom BLAST db '{params.db}' not found: run db/build_custom_db.sh" >&2; exit 1; }}
+            blastn -task blastn -db {params.db} -query {input.q} -dust no -evalue 1e-5 \
+                -max_target_seqs {params.maxt} -num_threads {threads} \
+                -outfmt "6 qseqid sacc staxids pident length qcovs evalue bitscore stitle" -out {output}
+        else
+            : > {output}
+        fi
+        """
+
+
+rule lca_custom:
+    input:
+        blast=rules.blast_custom.output,
+        mode=rules.select_queries.output.mode,
+    output:
+        f"{OUT}/{{sample}}/classification/custom_{{tier}}.lca.tsv",
+    params:
+        tax=config["database"]["taxdump_dir"],
+        tf=CL["tie_fraction"],
+        p=lambda wc: CL[wc.tier],
+        fb_pident=CL.get("fallback_contigs_min_pident", 0),
+    shell:
+        r"""
+        # Fallback contigs (no ITS found) are mostly conserved 18S/28S, where unrelated kingdoms share ~83% identity:
+        # for those, a call needs at least fallback_contigs_min_pident. ITS-mode samples and read-level calls keep their own rules.
+        PID={params.p[min_pident]}
+        if [ "{wildcards.tier}" = "contigs" ] && [ "$(tr -d '[:space:]' < {input.mode})" = "contigs" ]; then
+            PID={params.fb_pident}
+        fi
+        python3 {SCRIPTS}/lca_assign.py --blast {input.blast} --sample {wildcards.sample} --taxdump-dir {params.tax} \
+            --out {output} --tie-fraction {params.tf} --min-bitscore {params.p[min_bitscore]} \
+            --max-evalue {params.p[max_evalue]} --min-pident $PID \
+            --min-qcov {params.p[min_qcov]} --rank-caps "{params.p[rank_caps]}"
+        """
+
+
+# ---- 6. CONTROL: core_nt search for what the custom database could not explain ----------------
+rule core_nt_control:
+    input:
+        q=tier_query,
+        counts=tier_counts,
+        lca=rules.lca_custom.output,
+    output:
+        blast=f"{OUT}/{{sample}}/classification/control_{{tier}}.blast.tsv",
+        status=f"{OUT}/{{sample}}/classification/control_{{tier}}.status.json",
+    params:
+        mode=CN["mode"],
+        db=lambda wc: CN["local_db"] if CN["mode"] == "local" else "core_nt",
+        entrez=CN["entrez_query"],
+        select=lambda wc: "all" if (wc.tier == "contigs" and CN["validate_all_its_contigs"]) else "unassigned",
+        maxq=lambda wc: CN["max_queries_contigs"] if wc.tier == "contigs" else CN["max_queries_residual"],
+        chunk=CN["chunk_size"],
+        sleep=CN["sleep_between_submissions"],
+        minlevel={"species": 8, "genus": 7, "tribe": 6, "family": 5, "order": 4}[CL["min_informative_rank"]],
+    threads: LIGHT
+    resources:
+        ncbi=lambda wc: 1 if CN["mode"] == "remote" else 0,
+    shell:
+        "python3 {SCRIPTS}/core_nt_control.py --queries {input.q} --counts {input.counts} --custom-lca {input.lca} "
+        "--select {params.select} --min-informative-rank-level {params.minlevel} --mode {params.mode} "
+        "--db {params.db} --max-queries {params.maxq} --chunk-size {params.chunk} --sleep {params.sleep} "
+        "--entrez-query \"{params.entrez}\" --threads {threads} --out {output.blast} --status {output.status}"
+
+
+rule lca_control:
+    input:
+        rules.core_nt_control.output.blast,
+    output:
+        f"{OUT}/{{sample}}/classification/control_{{tier}}.lca.tsv",
+    params:
+        tax=config["database"]["taxdump_dir"],
+        tf=CL["tie_fraction"],
+        p=CL["control"],
+    shell:
+        "python3 {SCRIPTS}/lca_assign.py --blast {input} --sample {wildcards.sample} --taxdump-dir {params.tax} "
+        "--out {output} --tie-fraction {params.tf} --min-bitscore {params.p[min_bitscore]} "
+        "--max-evalue {params.p[max_evalue]} --min-pident {params.p[min_pident]} "
+        "--min-qcov {params.p[min_qcov]} --rank-caps \"{params.p[rank_caps]}\""
+
+
+# ---- 6b. SECONDARY classification: 18S/28S (rDNA) database, only for what ITS could not explain ------
+# contigs tier: fallback contigs of samples in mode "contigs" (no ITS found); empty for other modes.
+# residual tier: residual reads WITHOUT an informative custom-ITS call (most abundant first, capped).
+rule rdna_queries:
+    input:
+        mode=rules.select_queries.output.mode,
+        queries=rules.select_queries.output.queries,
+        fasta=rules.residual_reads.output.fasta,
+        counts=rules.residual_reads.output.counts,
+        lca=expand(rules.lca_custom.output, tier="residual", allow_missing=True),
+    output:
+        fasta=f"{OUT}/{{sample}}/classification/rdna_{{rtier}}.queries.fasta",
+        json=f"{OUT}/{{sample}}/classification/rdna_{{rtier}}.queries.json",
+    params:
+        enabled=RD_ON,
+        minrank=CL["min_informative_rank"],
+        maxu=lambda wc: RDP("residual")["max_unique"],
+    shell:
+        "python3 {SCRIPTS}/select_rdna_queries.py --tier {wildcards.rtier} --enabled {params.enabled} "
+        "--mode-file {input.mode} --queries {input.queries} --fasta {input.fasta} --counts {input.counts} "
+        "--lca {input.lca} --min-informative-rank {params.minrank} --max-unique {params.maxu} "
+        "--out-fasta {output.fasta} --out-json {output.json}"
+
+
+rule blast_rdna:
+    input:
+        q=rules.rdna_queries.output.fasta,
+    output:
+        f"{OUT}/{{sample}}/classification/rdna_{{rtier}}.blast.tsv",
+    params:
+        db=RD.get("blast_db", ""),
+        task=RD.get("task", "megablast"),
+        maxt=lambda wc: RDP(wc.rtier)["max_target_seqs"],
+    threads: LIGHT
+    shell:
+        r"""
+        if [ -s {input.q} ]; then
+            blastdbcmd -db {params.db} -info > /dev/null || {{ echo "rDNA BLAST db '{params.db}' not found: run db/build_rdna_db.sh or set rdna.enabled: false" >&2; exit 1; }}
+            blastn -task {params.task} -db {params.db} -query {input.q} -dust no -evalue 1e-5 \
+                -max_target_seqs {params.maxt} -num_threads {threads} \
+                -outfmt "6 qseqid sacc staxids pident length qcovs evalue bitscore stitle" -out {output}
+        else
+            : > {output}
+        fi
+        """
+
+
+rule lca_rdna:
+    input:
+        rules.blast_rdna.output,
+    output:
+        f"{OUT}/{{sample}}/classification/rdna_{{rtier}}.lca.tsv",
+    params:
+        tax=config["database"]["taxdump_dir"],
+        tf=CL["tie_fraction"],
+        p=lambda wc: RDP(wc.rtier),
+    shell:
+        "python3 {SCRIPTS}/lca_assign.py --blast {input} --sample {wildcards.sample} --taxdump-dir {params.tax} "
+        "--out {output} --tie-fraction {params.tf} --min-bitscore {params.p[min_bitscore]} "
+        "--max-evalue {params.p[max_evalue]} --min-pident {params.p[min_pident]} "
+        "--min-qcov {params.p[min_qcov]} --rank-caps \"{params.p[rank_caps]}\""
+
+
+# ---- 7. per-sample accounting and final tables -----------------------------------------------
+rule sample_report:
+    input:
+        rc=rules.count_reads.output,
+        mode=rules.select_queries.output.mode,
+        cc=rules.map_to_contigs.output.counts,
+        cust_c=expand(rules.lca_custom.output, tier="contigs", allow_missing=True),
+        ctrl_c=expand(rules.lca_control.output, tier="contigs", allow_missing=True),
+        stat_c=expand(rules.core_nt_control.output.status, tier="contigs", allow_missing=True),
+        rj=rules.residual_reads.output.json,
+        rcnt=rules.residual_reads.output.counts,
+        cust_r=expand(rules.lca_custom.output, tier="residual", allow_missing=True),
+        ctrl_r=expand(rules.lca_control.output, tier="residual", allow_missing=True),
+        stat_r=expand(rules.core_nt_control.output.status, tier="residual", allow_missing=True),
+        asm_l=rules.assemble_longinsert.output.status,
+        asm_s=rules.assemble_shortinsert.output.status,
+        rdna_c=expand(rules.lca_rdna.output, rtier="contigs", allow_missing=True),
+        rdna_r=expand(rules.lca_rdna.output, rtier="residual", allow_missing=True),
+        rdna_rj=expand(rules.rdna_queries.output.json, rtier="residual", allow_missing=True),
+    output:
+        rows=f"{OUT}/{{sample}}/report/rows.tsv",
+        qc=f"{OUT}/{{sample}}/report/qc.json",
+    params:
+        tax=config["database"]["taxdump_dir"],
+        minrank=CL["min_informative_rank"],
+        div=CL["divergence_thresholds"],
+    shell:
+        "python3 {SCRIPTS}/build_report.py --sample {wildcards.sample} --taxdump-dir {params.tax} "
+        "--read-counts {input.rc} --mode-file {input.mode} --contig-counts {input.cc} "
+        "--lca-custom-contigs {input.cust_c} --lca-control-contigs {input.ctrl_c} "
+        "--control-status-contigs {input.stat_c} --residual-json {input.rj} --residual-counts {input.rcnt} "
+        "--lca-custom-residual {input.cust_r} --lca-control-residual {input.ctrl_r} "
+        "--control-status-residual {input.stat_r} --assembly-status {input.asm_l} {input.asm_s} "
+        "--lca-rdna-contigs {input.rdna_c} --lca-rdna-residual {input.rdna_r} --rdna-residual-json {input.rdna_rj} "
+        "--min-informative-rank {params.minrank} --divergence-thresholds {params.div} "
+        "--out-rows {output.rows} --out-qc {output.qc}"
+
+
+rule merge_reports:
+    input:
+        rows=expand(rules.sample_report.output.rows, sample=SAMPLES),
+        qc=expand(rules.sample_report.output.qc, sample=SAMPLES),
+    output:
+        table=f"{OUT}/final/final_table.tsv",
+        detailed=f"{OUT}/final/final_table_detailed.tsv",
+        qc=f"{OUT}/final/qc_summary.tsv",
+    params:
+        d=f"{OUT}/final",
+        lang=config["report_language"],
+    shell:
+        "python3 {SCRIPTS}/merge_reports.py --rows {input.rows} --qc {input.qc} --out-dir {params.d} --lang {params.lang}"
+
+
+rule concordance:
+    input:
+        cust=expand(rules.lca_custom.output, sample=SAMPLES, tier="contigs"),
+        ctrl=expand(rules.lca_control.output, sample=SAMPLES, tier="contigs"),
+    output:
+        f"{OUT}/final/concordance.tsv",
+    params:
+        tax=config["database"]["taxdump_dir"],
+        pairs=lambda wc, input: " ".join(f"{s}={c}={k}" for s, c, k in zip(SAMPLES, input.cust, input.ctrl)),
+    shell:
+        "python3 {SCRIPTS}/concordance.py --taxdump-dir {params.tax} --pairs {params.pairs} --out {output}"
+
+
+rule versions:
+    output:
+        f"{OUT}/final/versions.txt",
+    params:
+        manifest=os.path.join(os.path.dirname(config["database"]["blast_db"]), "..", "MANIFEST.txt"),
+        manifest_rdna=(os.path.join(os.path.dirname(RD["blast_db"]), "..", "MANIFEST.txt")
+                       if RD_ON and RD.get("blast_db") else "/nonexistent"),
+        rdna_on=RD_ON,
+    shell:
+        r"""
+        {{
+          echo "run_date: $(date -u +%FT%TZ)"
+          for t in "fastp --version" "cutadapt --version" "spades.py --version" "metaspades.py --version" \
+                   "cd-hit-est -h" "vsearch --version" "ITSx --version" "bowtie2 --version" \
+                   "samtools --version" "blastn -version" "python3 --version" "snakemake --version"; do
+              echo "## $t"; ( $t 2>&1 | head -n 2 ) || true
+          done
+          echo "## clumpify (BBTools)"; ( clumpify.sh --version 2>&1 | head -n 2 ) || true
+          echo "## custom database manifest"
+          cat {params.manifest} 2>/dev/null || echo "(MANIFEST.txt not found next to the database)"
+          echo "## secondary 18S/28S (rDNA) database manifest"
+          if [ "{params.rdna_on}" = "True" ]; then
+              cat {params.manifest_rdna} 2>/dev/null || echo "(MANIFEST.txt not found next to the rDNA database)"
+          else
+              echo "(rDNA pass disabled: rdna.enabled is false)"
+          fi
+        }} > {output}
+        """

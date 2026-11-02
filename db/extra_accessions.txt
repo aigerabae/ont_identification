@@ -1,0 +1,3 @@
+# extra_accessions.txt -- individual GenBank accessions to force into the database
+# (e.g. type-material or vouchered sequences of declared ingredients).
+# Format: accession.version <TAB> free-text label.  '#' lines are ignored.

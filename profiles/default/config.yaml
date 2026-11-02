@@ -1,0 +1,8 @@
+# snakemake --profile profiles/default
+cores: 32
+keep-going: true
+rerun-incomplete: true
+scheduler: greedy
+printshellcmds: true
+resources:
+  - ncbi=1          # at most one remote NCBI BLAST job at a time (NCBI usage policy)

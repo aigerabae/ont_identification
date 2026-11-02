@@ -1,0 +1,24 @@
+raw_fastq_dir: "tests/data/raw"
+fastq_r1: "{sample}_L001_R1_001.fastq.gz"
+fastq_r2: "{sample}_L001_R2_001.fastq.gz"
+outdir: "__WORK__/results"
+report_language: "en"
+threads: {heavy: 4, light: 2}
+samples: [T_A, T_B, T_C, T_D, T_E]
+primers: {cutadapt_args: ""}
+fastp: {qualified_quality_phred: 20, length_required: 50}
+clumpify_memory_gb: 2
+assembly: {chimera_size_scale: 10}
+itsx: {taxa: "all"}
+database: {blast_db: "__WORK__/db/its_custom", taxdump_dir: "tests/data/taxdump"}
+classification:
+  min_informative_rank: family
+  tie_fraction: 0.02
+  divergence_thresholds: "99.5,97,93"
+  contigs: {min_bitscore: 100, max_evalue: 1.0e-15, min_pident: 0, min_qcov: 0, rank_caps: "species:97,genus:90,family:80", max_target_seqs: 500}
+  residual: {min_bitscore: 50, max_evalue: 1.0e-10, min_pident: 90, min_qcov: 80, rank_caps: "species:97,genus:90,family:80", max_target_seqs: 200}
+  control: {min_bitscore: 100, max_evalue: 1.0e-15, min_pident: 0, min_qcov: 50, rank_caps: "", max_target_seqs: 50}
+fallback: {top_n: 10, min_len: 100}
+residual: {max_unique_sequences: 50000}
+human_screen: {enabled: true, bowtie2_index: "__WORK__/human/GRCh38"}
+core_nt: {mode: "local", local_db: "__WORK__/db/core_nt_mock", entrez_query: "", max_queries_contigs: 500, max_queries_residual: 200, chunk_size: 25, sleep_between_submissions: 0, validate_all_its_contigs: true}
